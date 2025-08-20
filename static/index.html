@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Guess Human</title>
+	<style>
+		body { font-family: Arial, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+		button { padding: 0.5rem 1rem; }
+		.card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+		.answers { display: grid; grid-template-columns: 1fr; gap: 0.5rem; }
+		.small { color: #666; font-size: 0.9rem; }
+		.highlight { background: #fffbea; border-left: 4px solid #f5c518; padding-left: 0.75rem; }
+		.banner { padding: 0.75rem 1rem; border-radius: 8px; margin: 1rem 0; color: #0f172a; font-weight: bold; }
+		.banner-success { background: #dcfce7; border: 1px solid #16a34a; }
+		.banner-danger { background: #fee2e2; border: 1px solid #dc2626; }
+	</style>
+</head>
+<body>
+	<h1>Guess Human</h1>
+	<div id="status" class="small"></div>
+	<div id="banner" class="banner" style="display:none"></div>
+	<div class="card">
+		<div id="question">Click start to begin.</div>
+	</div>
+	<div class="card">
+		<label for="answer">Your one-sentence answer:</label><br/>
+		<input id="answer" type="text" style="width:100%; padding:0.5rem" placeholder="Type here..." />
+		<div style="margin-top:0.5rem">
+			<button id="startBtn">Start</button>
+			<button id="sendBtn" disabled>Send Answer</button>
+		</div>
+	</div>
+	<div class="card">
+		<div class="small">Answers for this round (index: text)</div>
+		<div id="answersFull" class="answers"></div>
+	</div>
+	<div id="log"></div>
+
+	<script>
+	let gameId = null;
+	let round = 0;
+	let latestUserAnswer = '';
+	let latestAICandidates = [];
+	
+	function setStatus(text) { document.getElementById('status').innerText = text; }
+	function setQuestion(text) { document.getElementById('question').innerText = text; }
+	function setBanner(type, text) {
+		const el = document.getElementById('banner');
+		if (!text) { el.style.display = 'none'; el.className = 'banner'; el.innerText=''; return; }
+		el.className = 'banner ' + (type === 'success' ? 'banner-success' : 'banner-danger');
+		el.innerText = text;
+		el.style.display = 'block';
+	}
+	function renderAnswers(user, aiList, highlightIndex = null) {
+		const el = document.getElementById('answersFull');
+		el.innerHTML = '';
+		const all = [user, ...(aiList || [])];
+		all.forEach((t, i) => {
+			const div = document.createElement('div');
+			div.textContent = `${i}: ${t || ''}`;
+			if (highlightIndex !== null && i === highlightIndex) {
+				div.className = 'highlight';
+			}
+			el.appendChild(div);
+		});
+	}
+	function log(msg) {
+		const el = document.getElementById('log');
+		const d = document.createElement('div');
+		d.className = 'small';
+		d.textContent = msg;
+		el.prepend(d);
+	}
+
+	document.getElementById('startBtn').addEventListener('click', async () => {
+		setBanner(null, '');
+		setStatus('Starting...');
+		try {
+			const r = await fetch('/game/start', { method: 'POST' });
+			const data = await r.json();
+			gameId = data.game_id;
+			round = data.round;
+			latestUserAnswer = '';
+			latestAICandidates = data.ai_candidates || [];
+			setQuestion(data.question);
+			renderAnswers(latestUserAnswer, latestAICandidates);
+			setStatus(`Round ${round} / 3`);
+			document.getElementById('sendBtn').disabled = false;
+			log('Game started');
+		} catch (e) {
+			setStatus('Error starting game');
+		}
+	});
+
+	document.getElementById('sendBtn').addEventListener('click', async () => {
+		const val = document.getElementById('answer').value.trim();
+		if (!val) return;
+		if (!gameId) return;
+		latestUserAnswer = val;
+		renderAnswers(latestUserAnswer, latestAICandidates);
+		setStatus('Submitting answer...');
+		try {
+			const r = await fetch('/game/answer', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ game_id: gameId, answer: val })
+			});
+			const data = await r.json();
+			if (data.is_game_over) {
+				if (data.decision === 'respond') {
+					renderAnswers(latestUserAnswer, latestAICandidates, data.guess);
+					const correct = (data.guess === 0);
+					setBanner(correct ? 'success' : 'danger', `Game over · Winner: ${data.winner.toUpperCase()} · AI guessed index ${data.guess} as human`);
+					if (data.reason) log(`Reason: ${data.reason}`);
+					log(`Decision: ${data.decision}; Guess: ${data.guess}`);
+				} else {
+					setBanner('danger', `Game over · Winner: ${data.winner.toUpperCase()}`);
+				}
+				document.getElementById('sendBtn').disabled = true;
+				setStatus('');
+				return;
+			}
+			if (data.decision === 'use_tool') {
+				setQuestion(data.question);
+				latestAICandidates = data.ai_candidates || [];
+				latestUserAnswer = '';
+				document.getElementById('answer').value = '';
+				renderAnswers(latestUserAnswer, latestAICandidates);
+				round = data.round;
+				setStatus(`Round ${round} / 3`);
+				if (data.reason) log(`AI requested another question. Reason: ${data.reason}`); else log('AI requested another question.');
+			}
+		} catch (e) {
+			setStatus('Error sending answer');
+		}
+	});
+	</script>
+</body>
+</html>
