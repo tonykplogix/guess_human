@@ -23,7 +23,7 @@ guess_human/
 ├── docker-compose.yml       # Local dev compose (maps host 8001 -> container 8000)
 └── README.md                # This file
 ```
-
+ 
 ## Run (Docker)
 
 - Ensure `.env` exists at repo root with your existing keys (not shown here).
